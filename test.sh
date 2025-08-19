@@ -1,858 +1,1053 @@
-#!/bin/bash
+#!/bin/sh
+export LANG=en_US.UTF-8
+[ -z "${vlpt+x}" ] || vlp=yes
+[ -z "${vmpt+x}" ] || { vmp=yes; vmag=yes; } 
+[ -z "${hypt+x}" ] || hyp=yes
+[ -z "${tupt+x}" ] || tup=yes
+[ -z "${xhpt+x}" ] || xhp=yes
+[ -z "${anpt+x}" ] || anp=yes
+[ -z "${sspt+x}" ] || ssp=yes
+[ -z "${warp+x}" ] || wap=yes
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# 新增 Hugging Face 保活相关环境变量
+export HF_TOKEN_VAL=${hftoken:-''}
+export HF_REPO_ID_VAL=${hfrepo:-''}
 
-NODE_INFO_FILE="$HOME/.xray_nodes_info"
-PROJECT_DIR_NAME="python-xray-argo"
-
-# 如果是-v参数，直接查看节点信息
-if [ "$1" = "-v" ]; then
-    if [ -f "$NODE_INFO_FILE" ]; then
-        echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}                      节点信息查看                      ${NC}"
-        echo -e "${GREEN}========================================${NC}"
-        echo
-        cat "$NODE_INFO_FILE"
-        echo
-    else
-        echo -e "${RED}未找到节点信息文件${NC}"
-        echo -e "${YELLOW}请先运行部署脚本生成节点信息${NC}"
-    fi
-    exit 0
-fi
-
-generate_uuid() {
-    if command -v uuidgen &> /dev/null; then
-        uuidgen | tr '[:upper:]' '[:lower:]'
-    elif command -v python3 &> /dev/null; then
-        python3 -c "import uuid; print(str(uuid.uuid4()))"
-    else
-        hexdump -n 16 -e '4/4 "%08X" 1 "\n"' /dev/urandom | sed 's/\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)\(..\)/\1\2\3\4-\5\6-\7\8-\9\10-\11\12\13\14\15\16/' | tr '[:upper:]' '[:lower:]'
-    fi
-}
-
-clear
-
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}    Python Xray Argo 一键部署脚本   ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo
-echo -e "${BLUE}基于项目: ${YELLOW}https://github.com/eooce/python-xray-argo${NC}"
-echo -e "${BLUE}脚本仓库: ${YELLOW}https://github.com/byJoey/free-vps-py${NC}"
-echo -e "${BLUE}TG交流群: ${YELLOW}https://t.me/+ft-zI76oovgwNmRh${NC}"
-echo -e "${RED}脚本作者YouTube: ${YELLOW}https://www.youtube.com/@joeyblog${RED}"
-echo
-echo -e "${GREEN}本脚本基于 eooce 大佬的 Python Xray Argo 项目开发${NC}"
-echo -e "${GREEN}提供极速和完整两种配置模式，简化部署流程${NC}"
-echo -e "${GREEN}支持自动UUID生成、后台运行、节点信息输出${NC}"
-echo -e "${GREEN}默认集成YouTube分流优化，支持交互式查看节点信息${NC}"
-echo
-
-echo -e "${YELLOW}请选择操作:${NC}"
-echo -e "${BLUE}1) 极速模式 - 只修改UUID并启动${NC}"
-echo -e "${BLUE}2) 完整模式 - 详细配置所有选项${NC}"
-echo -e "${BLUE}3) 查看节点信息 - 显示已保存的节点信息${NC}"
-echo -e "${BLUE}4) 查看保活状态 - 检查Hugging Face API保活状态${NC}"
-echo
-read -p "请输入选择 (1/2/3/4): " MODE_CHOICE
-
-if [ "$MODE_CHOICE" = "3" ]; then
-    if [ -f "$NODE_INFO_FILE" ]; then
-        echo
-        echo -e "${GREEN}========================================${NC}"
-        echo -e "${GREEN}                      节点信息查看                      ${NC}"
-        echo -e "${GREEN}========================================${NC}"
-        echo
-        cat "$NODE_INFO_FILE"
-        echo
-        echo -e "${YELLOW}提示: 如需重新部署，请重新运行脚本选择模式1或2${NC}"
-    else
-        echo
-        echo -e "${RED}未找到节点信息文件${NC}"
-        echo -e "${YELLOW}请先运行部署脚本生成节点信息${NC}"
-        echo
-        echo -e "${BLUE}是否现在开始部署? (y/n)${NC}"
-        read -p "> " START_DEPLOY
-        if [ "$START_DEPLOY" = "y" ] || [ "$START_DEPLOY" = "Y" ]; then
-            echo -e "${YELLOW}请选择部署模式:${NC}"
-            echo -e "${BLUE}1) 极速模式${NC}"
-            echo -e "${BLUE}2) 完整模式${NC}"
-            read -p "请输入选择 (1/2): " MODE_CHOICE
-        else
-            echo -e "${GREEN}退出脚本${NC}"
-            exit 0
-        fi
-    fi
-    
-    if [ "$MODE_CHOICE" != "1" ] && [ "$MODE_CHOICE" != "2" ]; then
-        echo -e "${GREEN}退出脚本${NC}"
-        exit 0
-    fi
-fi
-
-if [ "$MODE_CHOICE" = "4" ]; then
-    echo
-    echo -e "${GREEN}========================================${NC}"
-    echo -e "${GREEN}               Hugging Face API 保活状态检查              ${NC}"
-    echo -e "${GREEN}========================================${NC}"
-    echo
-    
-    if [ -d "$PROJECT_DIR_NAME" ]; then
-        cd "$PROJECT_DIR_NAME"
-    fi
-
-    KEEPALIVE_PID=$(pgrep -f "keep_alive_task.sh")
-
-    if [ -n "$KEEPALIVE_PID" ]; then
-        echo -e "服务状态: ${GREEN}运行中${NC}"
-        echo -e "进程PID: ${BLUE}$KEEPALIVE_PID${NC}"
-        if [ -f "keep_alive_task.sh" ]; then
-            # 更新为从 spaces API 地址中解析
-            REPO_ID=$(grep 'huggingface.co/api/spaces/' keep_alive_task.sh | head -1 | sed -n 's|.*api/spaces/\([^"]*\).*|\1|p')
-            echo -e "目标仓库: ${YELLOW}$REPO_ID (类型: Space)${NC}"
-        fi
-
-        echo -e "\n${YELLOW}--- 最近一次保活状态 ---${NC}"
-        if [ -f "keep_alive_status.log" ]; then
-           cat keep_alive_status.log
-        else
-           echo -e "${YELLOW}尚未生成状态日志，请稍等片刻(最多2分钟)后重试...${NC}"
-        fi
-    else
-        echo -e "服务状态: ${RED}未运行${NC}"
-        echo -e "${YELLOW}提示: 您可能尚未部署服务或未在部署时设置Hugging Face保活。${NC}"
-    fi
-    echo
-    exit 0
-fi
-
-
-echo -e "${BLUE}检查并安装依赖...${NC}"
-if ! command -v python3 &> /dev/null; then
-    echo -e "${YELLOW}正在安装 Python3...${NC}"
-    sudo apt-get update && sudo apt-get install -y python3 python3-pip
-fi
-
-if ! python3 -c "import requests" &> /dev/null; then
-    echo -e "${YELLOW}正在安装 Python 依赖: requests...${NC}"
-    pip3 install requests
-fi
-
-if [ ! -d "$PROJECT_DIR_NAME" ]; then
-    echo -e "${BLUE}下载完整仓库...${NC}"
-    if command -v git &> /dev/null; then
-        git clone https://github.com/eooce/python-xray-argo.git "$PROJECT_DIR_NAME"
-    else
-        echo -e "${YELLOW}Git未安装，使用wget下载...${NC}"
-        wget -q https://github.com/eooce/python-xray-argo/archive/refs/heads/main.zip -O python-xray-argo.zip
-        if command -v unzip &> /dev/null; then
-            unzip -q python-xray-argo.zip
-            mv python-xray-argo-main "$PROJECT_DIR_NAME"
-            rm python-xray-argo.zip
-        else
-            echo -e "${YELLOW}正在安装 unzip...${NC}"
-            sudo apt-get install -y unzip
-            unzip -q python-xray-argo.zip
-            mv python-xray-argo-main "$PROJECT_DIR_NAME"
-            rm python-xray-argo.zip
-        fi
-    fi
-    
-    if [ $? -ne 0 ] || [ ! -d "$PROJECT_DIR_NAME" ]; then
-        echo -e "${RED}下载失败，请检查网络连接${NC}"
-        exit 1
-    fi
-fi
-
-cd "$PROJECT_DIR_NAME"
-
-echo -e "${GREEN}依赖安装完成！${NC}"
-echo
-
-if [ ! -f "app.py" ]; then
-    echo -e "${RED}未找到app.py文件！${NC}"
-    exit 1
-fi
-
-cp app.py app.py.backup
-echo -e "${YELLOW}已备份原始文件为 app.py.backup${NC}"
-
-# 初始化保活变量
-KEEP_ALIVE_HF="false"
-HF_TOKEN=""
-HF_REPO_ID=""
-
-# 定义保活配置函数
-configure_hf_keep_alive() {
-    echo
-    echo -e "${YELLOW}是否设置 Hugging Face API 自动保活? (y/n)${NC}"
-    read -p "> " SETUP_KEEP_ALIVE
-    if [ "$SETUP_KEEP_ALIVE" = "y" ] || [ "$SETUP_KEEP_ALIVE" = "Y" ]; then
-        echo -e "${YELLOW}请输入您的 Hugging Face 访问令牌 (Token):${NC}"
-        echo -e "${BLUE}（令牌用于API认证，输入时将不可见。请前往 https://huggingface.co/settings/tokens 获取 不会使用看视频教程https://youtu.be/ZRaUWQMjR_c）${NC}"
-        read -sp "Token: " HF_TOKEN_INPUT
-        echo
-        if [ -z "$HF_TOKEN_INPUT" ]; then
-            echo -e "${RED}错误：Token 不能为空。已取消保活设置。${NC}"
-            return
-        fi
-
-        echo -e "${YELLOW}请输入要访问的 Hugging Face 仓库ID (模型或Space均可，例如: joeyhuangt/aaaa):${NC}"
-        read -p "Repo ID: " HF_REPO_ID_INPUT
-        if [ -z "$HF_REPO_ID_INPUT" ]; then
-            echo -e "${RED}错误：仓库ID 不能为空。已取消保活设置。${NC}"
-            return
-        fi
-
-        HF_TOKEN="$HF_TOKEN_INPUT"
-        HF_REPO_ID="$HF_REPO_ID_INPUT"
-        KEEP_ALIVE_HF="true"
-        echo -e "${GREEN}Hugging Face API 保活已设置！${NC}"
-        echo -e "${GREEN}目标仓库: $HF_REPO_ID${NC}"
-    fi
-}
-
-if [ "$MODE_CHOICE" = "1" ]; then
-    echo -e "${BLUE}=== 极速模式 ===${NC}"
-    echo
-    
-    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
-    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
-    if [ -z "$UUID_INPUT" ]; then
-        UUID_INPUT=$(generate_uuid)
-        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
-    fi
-    
-    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
-    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-    
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', 'joeyblog.net')/" app.py
-    echo -e "${GREEN}优选IP已自动设置为: joeyblog.net${NC}"
-    
-    configure_hf_keep_alive
-    
-    echo -e "${GREEN}YouTube分流已自动配置${NC}"
-    echo
-    echo -e "${GREEN}极速配置完成！正在启动服务...${NC}"
-    echo
-    
+if [ -n "$HF_TOKEN_VAL" ] && [ -n "$HF_REPO_ID_VAL" ]; then
+    KEEP_ALIVE_HF_ENABLED="true"
 else
-    echo -e "${BLUE}=== 完整配置模式 ===${NC}"
-    echo
-    
-    echo -e "${YELLOW}当前UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)${NC}"
-    read -p "请输入新的 UUID (留空自动生成): " UUID_INPUT
-    if [ -z "$UUID_INPUT" ]; then
-        UUID_INPUT=$(generate_uuid)
-        echo -e "${GREEN}自动生成UUID: $UUID_INPUT${NC}"
-    fi
-    sed -i "s/UUID = os.environ.get('UUID', '[^']*')/UUID = os.environ.get('UUID', '$UUID_INPUT')/" app.py
-    echo -e "${GREEN}UUID 已设置为: $UUID_INPUT${NC}"
-
-    echo -e "${YELLOW}当前节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)${NC}"
-    read -p "请输入节点名称 (留空保持不变): " NAME_INPUT
-    if [ -n "$NAME_INPUT" ]; then
-        sed -i "s/NAME = os.environ.get('NAME', '[^']*')/NAME = os.environ.get('NAME', '$NAME_INPUT')/" app.py
-        echo -e "${GREEN}节点名称已设置为: $NAME_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)${NC}"
-    read -p "请输入服务端口 (留空保持不变): " PORT_INPUT
-    if [ -n "$PORT_INPUT" ]; then
-        sed -i "s/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or [0-9]*)/PORT = int(os.environ.get('SERVER_PORT') or os.environ.get('PORT') or $PORT_INPUT)/" app.py
-        echo -e "${GREEN}端口已设置为: $PORT_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入优选IP/域名 (留空使用默认 joeyblog.net): " CFIP_INPUT
-    if [ -z "$CFIP_INPUT" ]; then
-        CFIP_INPUT="joeyblog.net"
-    fi
-    sed -i "s/CFIP = os.environ.get('CFIP', '[^']*')/CFIP = os.environ.get('CFIP', '$CFIP_INPUT')/" app.py
-    echo -e "${GREEN}优选IP已设置为: $CFIP_INPUT${NC}"
-
-    echo -e "${YELLOW}当前优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入优选端口 (留空保持不变): " CFPORT_INPUT
-    if [ -n "$CFPORT_INPUT" ]; then
-        sed -i "s/CFPORT = int(os.environ.get('CFPORT', '[^']*'))/CFPORT = int(os.environ.get('CFPORT', '$CFPORT_INPUT'))/" app.py
-        echo -e "${GREEN}优选端口已设置为: $CFPORT_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前Argo端口: $(grep "ARGO_PORT = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入 Argo 端口 (留空保持不变): " ARGO_PORT_INPUT
-    if [ -n "$ARGO_PORT_INPUT" ]; then
-        sed -i "s/ARGO_PORT = int(os.environ.get('ARGO_PORT', '[^']*'))/ARGO_PORT = int(os.environ.get('ARGO_PORT', '$ARGO_PORT_INPUT'))/" app.py
-        echo -e "${GREEN}Argo端口已设置为: $ARGO_PORT_INPUT${NC}"
-    fi
-
-    echo -e "${YELLOW}当前订阅路径: $(grep "SUB_PATH = " app.py | cut -d"'" -f4)${NC}"
-    read -p "请输入订阅路径 (留空保持不变): " SUB_PATH_INPUT
-    if [ -n "$SUB_PATH_INPUT" ]; then
-        sed -i "s/SUB_PATH = os.environ.get('SUB_PATH', '[^']*')/SUB_PATH = os.environ.get('SUB_PATH', '$SUB_PATH_INPUT')/" app.py
-        echo -e "${GREEN}订阅路径已设置为: $SUB_PATH_INPUT${NC}"
-    fi
-
-    echo
-    echo -e "${YELLOW}是否配置高级选项? (y/n)${NC}"
-    read -p "> " ADVANCED_CONFIG
-
-    if [ "$ADVANCED_CONFIG" = "y" ] || [ "$ADVANCED_CONFIG" = "Y" ]; then
-        echo -e "${YELLOW}当前上传URL: $(grep "UPLOAD_URL = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入上传URL (留空保持不变): " UPLOAD_URL_INPUT
-        if [ -n "$UPLOAD_URL_INPUT" ]; then
-            sed -i "s|UPLOAD_URL = os.environ.get('UPLOAD_URL', '[^']*')|UPLOAD_URL = os.environ.get('UPLOAD_URL', '$UPLOAD_URL_INPUT')|" app.py
-            echo -e "${GREEN}上传URL已设置${NC}"
-        fi
-
-        echo -e "${YELLOW}当前项目URL: $(grep "PROJECT_URL = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入项目URL (留空保持不变): " PROJECT_URL_INPUT
-        if [ -n "$PROJECT_URL_INPUT" ]; then
-            sed -i "s|PROJECT_URL = os.environ.get('PROJECT_URL', '[^']*')|PROJECT_URL = os.environ.get('PROJECT_URL', '$PROJECT_URL_INPUT')|" app.py
-            echo -e "${GREEN}项目URL已设置${NC}"
-        fi
-
-        configure_hf_keep_alive
-
-        echo -e "${YELLOW}当前哪吒服务器: $(grep "NEZHA_SERVER = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入哪吒服务器地址 (留空保持不变): " NEZHA_SERVER_INPUT
-        if [ -n "$NEZHA_SERVER_INPUT" ]; then
-            sed -i "s|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '[^']*')|NEZHA_SERVER = os.environ.get('NEZHA_SERVER', '$NEZHA_SERVER_INPUT')|" app.py
-            
-            echo -e "${YELLOW}当前哪吒端口: $(grep "NEZHA_PORT = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入哪吒端口 (v1版本留空): " NEZHA_PORT_INPUT
-            if [ -n "$NEZHA_PORT_INPUT" ]; then
-                sed -i "s|NEZHA_PORT = os.environ.get('NEZHA_PORT', '[^']*')|NEZHA_PORT = os.environ.get('NEZHA_PORT', '$NEZHA_PORT_INPUT')|" app.py
-            fi
-            
-            echo -e "${YELLOW}当前哪吒密钥: $(grep "NEZHA_KEY = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入哪吒密钥: " NEZHA_KEY_INPUT
-            if [ -n "$NEZHA_KEY_INPUT" ]; then
-                sed -i "s|NEZHA_KEY = os.environ.get('NEZHA_KEY', '[^']*')|NEZHA_KEY = os.environ.get('NEZHA_KEY', '$NEZHA_KEY_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}哪吒配置已设置${NC}"
-        fi
-
-        echo -e "${YELLOW}当前Argo域名: $(grep "ARGO_DOMAIN = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入 Argo 固定隧道域名 (留空保持不变): " ARGO_DOMAIN_INPUT
-        if [ -n "$ARGO_DOMAIN_INPUT" ]; then
-            sed -i "s|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '[^']*')|ARGO_DOMAIN = os.environ.get('ARGO_DOMAIN', '$ARGO_DOMAIN_INPUT')|" app.py
-            
-            echo -e "${YELLOW}当前Argo密钥: $(grep "ARGO_AUTH = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入 Argo 固定隧道密钥: " ARGO_AUTH_INPUT
-            if [ -n "$ARGO_AUTH_INPUT" ]; then
-                sed -i "s|ARGO_AUTH = os.environ.get('ARGO_AUTH', '[^']*')|ARGO_AUTH = os.environ.get('ARGO_AUTH', '$ARGO_AUTH_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}Argo固定隧道配置已设置${NC}"
-        fi
-
-        echo -e "${YELLOW}当前Bot Token: $(grep "BOT_TOKEN = " app.py | cut -d"'" -f4)${NC}"
-        read -p "请输入 Telegram Bot Token (留空保持不变): " BOT_TOKEN_INPUT
-        if [ -n "$BOT_TOKEN_INPUT" ]; then
-            sed -i "s|BOT_TOKEN = os.environ.get('BOT_TOKEN', '[^']*')|BOT_TOKEN = os.environ.get('BOT_TOKEN', '$BOT_TOKEN_INPUT')|" app.py
-            
-            echo -e "${YELLOW}当前Chat ID: $(grep "CHAT_ID = " app.py | cut -d"'" -f4)${NC}"
-            read -p "请输入 Telegram Chat ID: " CHAT_ID_INPUT
-            if [ -n "$CHAT_ID_INPUT" ]; then
-                sed -i "s|CHAT_ID = os.environ.get('CHAT_ID', '[^']*')|CHAT_ID = os.environ.get('CHAT_ID', '$CHAT_ID_INPUT')|" app.py
-            fi
-            echo -e "${GREEN}Telegram配置已设置${NC}"
-        fi
-    fi
-    
-    echo -e "${GREEN}YouTube分流已自动配置${NC}"
-
-    echo
-    echo -e "${GREEN}完整配置完成！${NC}"
+    KEEP_ALIVE_HF_ENABLED="false"
 fi
 
-echo -e "${YELLOW}=== 当前配置摘要 ===${NC}"
-echo -e "UUID: $(grep "UUID = " app.py | head -1 | cut -d"'" -f2)"
-echo -e "节点名称: $(grep "NAME = " app.py | head -1 | cut -d"'" -f4)"
-echo -e "服务端口: $(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)"
-echo -e "优选IP: $(grep "CFIP = " app.py | cut -d"'" -f4)"
-echo -e "优选端口: $(grep "CFPORT = " app.py | cut -d"'" -f4)"
-echo -e "订阅路径: $(grep "SUB_PATH = " app.py | cut -d"'" -f4)"
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    echo -e "保活仓库: $HF_REPO_ID"
+if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(s|x)' || pgrep -f 'agsb/(s|x)' >/dev/null 2>&1; then
+if [ "$1" = "rep" ]; then
+[ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || { echo "提示：重置协议参数有误，请自查！💣"; exit; }
 fi
-echo -e "${YELLOW}========================${NC}"
+else
+[ "$1" = "del" ] || [ "$ssp" = yes ] || [ "$vlp" = yes ] || [ "$vmp" = yes ] || [ "$hyp" = yes ] || [ "$tup" = yes ] || [ "$xhp" = yes ] || [ "$anp" = yes ] || { echo "提示：未安装ArgoSB脚本，请在脚本前至少设置一个协议变量哦，再见！💣"; exit; }
+fi
+export uuid=${uuid:-''}
+export port_vl_re=${vlpt:-''}
+export port_vm_ws=${vmpt:-''}
+export port_hy2=${hypt:-''}
+export port_tu=${tupt:-''}
+export port_xh=${xhpt:-''}
+export port_an=${anpt:-''}
+export port_ss=${sspt:-''}
+export ym_vl_re=${reym:-''}
+export cdnym=${cdnym:-''}
+export argo=${argo:-''}
+export ARGO_DOMAIN=${agn:-''}
+export ARGO_AUTH=${agk:-''}
+export ippz=${ippz:-''}
+export ipyx=${ipyx:-''}
+export warp=${warp:-''}
+export name=${name:-''}
+showmode(){
+echo "ArgoSB脚本项目地址：https://github.com/yonggekkk/ArgoSB"
+echo "主脚本：bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/argosb/main/argosb.sh)"
+echo "显示节点信息命令：agsb list 【或者】 主脚本 list"
+echo "更换代理协议变量组命令：自定义各种协议变量组 agsb rep 【或者】 自定义各种协议变量组 主脚本 rep"
+echo "重启脚本命令：agsb res 【或者】 主脚本 res"
+echo "卸载脚本命令：agsb del 【或者】 主脚本 del"
+echo "双栈VPS显示IPv4节点配置命令：ippz=4 agsb list 【或者】 ippz=4 主脚本 list"
+echo "双栈VPS显示IPv6节点配置命令：ippz=6 agsb list 【或者】 ippz=6 主脚本 list"
+echo "---------------------------------------------------------"
+echo "Hugging Face 保活配置: "
+echo "  通过设置环境变量 'hftoken' 和 'hfrepo' 来启用。"
+echo "  示例: hftoken='your_token' hfrepo='your/repo' bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/argosb/main/argosb.sh)"
 echo
-
-echo -e "${BLUE}正在启动服务...${NC}"
-echo -e "${YELLOW}当前工作目录：$(pwd)${NC}"
+}
+echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+echo "甬哥Github项目 ：github.com/yonggekkk"
+echo "甬哥Blogger博客 ：ygkkk.blogspot.com"
+echo "甬哥YouTube频道 ：www.youtube.com/@ygkkk"
+echo "ArgoSB一键无交互小钢炮脚本💣"
+echo "当前版本：V25.8.8"
+echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+hostname=$(uname -a | awk '{print $2}')
+op=$(cat /etc/redhat-release 2>/dev/null || cat /etc/os-release 2>/dev/null | grep -i pretty_name | cut -d \" -f2)
+[ -z "$(systemd-detect-virt 2>/dev/null)" ] && vi=$(virt-what 2>/dev/null) || vi=$(systemd-detect-virt 2>/dev/null)
+case $(uname -m) in
+aarch64) cpu=arm64;;
+x86_64) cpu=amd64;;
+*) echo "目前脚本不支持$(uname -m)架构" && exit
+esac
+mkdir -p "$HOME/agsb"
+warpcheck(){
+wgcfv6=$(curl -s6m5 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+wgcfv4=$(curl -s4m5 https://www.cloudflare.com/cdn-cgi/trace -k | grep warp | cut -d= -f2)
+}
+v4v6(){
+v4=$(curl -s4m5 icanhazip.com -k)
+v6=$(curl -s6m5 icanhazip.com -k)
+}
+warpsx(){
+if [ -n "$name" ]; then
+sxname=$name-
+echo "$sxname" > "$HOME/agsb/name"
 echo
-
-# 修改Python文件添加YouTube分流到xray配置，并增加80端口节点
-echo -e "${BLUE}正在添加YouTube分流功能和80端口节点...${NC}"
-cat > youtube_patch.py << 'EOF'
-# coding: utf-8
-import os, base64, json, subprocess, time
-
-# 读取app.py文件
-with open('app.py', 'r', encoding='utf-8') as f:
-    content = f.read()
-
-# 找到原始配置并替换为包含YouTube分流的配置
-old_config = 'config ={"log":{"access":"/dev/null","error":"/dev/null","loglevel":"none",},"inbounds":[{"port":ARGO_PORT ,"protocol":"vless","settings":{"clients":[{"id":UUID ,"flow":"xtls-rprx-vision",},],"decryption":"none","fallbacks":[{"dest":3001 },{"path":"/vless-argo","dest":3002 },{"path":"/vmess-argo","dest":3003 },{"path":"/trojan-argo","dest":3004 },],},"streamSettings":{"network":"tcp",},},{"port":3001 ,"listen":"127.0.0.1","protocol":"vless","settings":{"clients":[{"id":UUID },],"decryption":"none"},"streamSettings":{"network":"ws","security":"none"}},{"port":3002 ,"listen":"127.0.0.1","protocol":"vless","settings":{"clients":[{"id":UUID ,"level":0 }],"decryption":"none"},"streamSettings":{"network":"ws","security":"none","wsSettings":{"path":"/vless-argo"}},"sniffing":{"enabled":True ,"destOverride":["http","tls","quic"],"metadataOnly":False }},{"port":3003 ,"listen":"127.0.0.1","protocol":"vmess","settings":{"clients":[{"id":UUID ,"alterId":0 }]},"streamSettings":{"network":"ws","wsSettings":{"path":"/vmess-argo"}},"sniffing":{"enabled":True ,"destOverride":["http","tls","quic"],"metadataOnly":False }},{"port":3004 ,"listen":"127.0.0.1","protocol":"trojan","settings":{"clients":[{"password":UUID },]},"streamSettings":{"network":"ws","security":"none","wsSettings":{"path":"/trojan-argo"}},"sniffing":{"enabled":True ,"destOverride":["http","tls","quic"],"metadataOnly":False }},],"outbounds":[{"protocol":"freedom","tag": "direct" },{"protocol":"blackhole","tag":"block"}]}'
-
-new_config = '''config = {
-        "log": {
-            "access": "/dev/null",
-            "error": "/dev/null",
-            "loglevel": "none"
+echo "所有节点名称前缀：$name"
+fi
+v4v6
+if echo "$v6" | grep -q '^2a09' || echo "$v4" | grep -q '^104.28'; then
+xouttag=direct
+souttag=direct
+wap=warpargo
+echo
+echo "请注意：你已安装了warp"
+else
+if [ "$wap" != yes ]; then
+xouttag=direct
+souttag=direct
+wap=warpargo
+elif [ "$warp" = "" ]; then
+xouttag=warp-out
+souttag=warp-out
+wap=warp
+echo
+echo "所有内核协议添加warp全局出站"
+elif [ "$warp" = "x" ]; then
+xouttag=warp-out
+souttag=direct
+wap=warp
+echo
+echo "Xray内核的协议添加warp全局出站"
+elif [ "$warp" = "s" ]; then
+xouttag=direct
+souttag=warp-out
+wap=warp
+echo
+echo "Sing-box内核的协议添加warp全局出站"
+else
+xouttag=direct
+souttag=direct
+wap=warpargo
+fi
+fi
+if [ "$ipyx" = "" ]; then
+xrip='ForceIP'
+sbip='prefer_ipv6'
+echo
+elif [ "$ipyx" = "64" ]; then
+xrip='ForceIPv6v4'
+sbip='prefer_ipv6'
+echo
+echo "所有节点IPV6优先"
+elif [ "$ipyx" = "46" ]; then
+xrip='ForceIPv4v6'
+sbip='prefer_ipv4'
+echo
+echo "所有节点IPV4优先"
+elif [ "$ipyx" = "6" ]; then
+xrip='ForceIPv6'
+sbip='ipv6_only'
+echo
+echo "所有节点仅IPV6"
+elif [ "$ipyx" = "4" ]; then
+xrip='ForceIPv4'
+sbip='ipv4_only'
+echo
+echo "所有节点仅IPV4"
+else
+xrip='ForceIP'
+sbip='prefer_ipv6'
+echo
+fi
+}
+insuuid(){
+if [ -z "$uuid" ]; then
+if [ -e "$HOME/agsb/sing-box" ]; then
+uuid=$("$HOME/agsb/sing-box" generate uuid)
+else
+uuid=$("$HOME/agsb/xray" uuid)
+fi
+fi
+echo "$uuid" > "$HOME/agsb/uuid"
+echo "UUID密码：$uuid"
+}
+installxray(){
+echo
+echo "=========启用xray内核========="
+if [ ! -e "$HOME/agsb/xray" ]; then
+curl -Lo "$HOME/agsb/xray" -# --retry 2 https://github.com/yonggekkk/ArgoSB/releases/download/argosbx/xray-$cpu
+chmod +x "$HOME/agsb/xray"
+sbcore=$("$HOME/agsb/xray" version 2>/dev/null | awk '/^Xray/{print $2}')
+echo "已安装Xray正式版内核：$sbcore"
+fi
+cat > "$HOME/agsb/xr.json" <<EOF
+{
+  "log": {
+    "access": "/dev/null",
+    "error": "/dev/null",
+    "loglevel": "none"
+  },
+  "inbounds": [
+EOF
+insuuid
+if [ -n "$xhp" ] || [ -n "$vlp" ]; then
+if [ -z "$ym_vl_re" ]; then
+ym_vl_re=www.yahoo.com
+fi
+echo "$ym_vl_re" > "$HOME/agsb/ym_vl_re"
+echo "Reality域名：$ym_vl_re"
+mkdir -p "$HOME/agsb/xrk"
+if [ ! -e "$HOME/agsb/xrk/private_key" ]; then
+key_pair=$("$HOME/agsb/xray" x25519)
+private_key=$(echo "$key_pair" | head -1 | awk '{print $3}')
+public_key=$(echo "$key_pair" | tail -n 1 | awk '{print $3}')
+short_id=$(date +%s%N | sha256sum | cut -c 1-8)
+echo "$private_key" > "$HOME/agsb/xrk/private_key"
+echo "$public_key" > "$HOME/agsb/xrk/public_key"
+echo "$short_id" > "$HOME/agsb/xrk/short_id"
+fi
+private_key_x=$(cat "$HOME/agsb/xrk/private_key")
+public_key_x=$(cat "$HOME/agsb/xrk/public_key")
+short_id_x=$(cat "$HOME/agsb/xrk/short_id")
+fi
+if [ -n "$xhp" ]; then
+xhp=xhpt
+if [ -z "$port_xh" ]; then
+port_xh=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_xh" > "$HOME/agsb/port_xh"
+echo "Vless-xhttp-reality端口：$port_xh"
+cat >> "$HOME/agsb/xr.json" <<EOF
+    {
+      "tag":"xhttp-reality",
+      "listen": "::",
+      "port": ${port_xh},
+      "protocol": "vless",
+      "settings": {
+        "clients": [
+          {
+            "id": "${uuid}"
+          }
+        ],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "reality",
+        "realitySettings": {
+          "fingerprint": "chrome",
+          "target": "${ym_vl_re}:443",
+          "serverNames": [
+            "${ym_vl_re}"
+          ],
+          "privateKey": "$private_key_x",
+          "shortIds": ["$short_id_x"]
         },
-        "inbounds": [
-            {
-                "port": ARGO_PORT,
-                "protocol": "vless",
-                "settings": {
-                    "clients": [{"id": UUID, "flow": "xtls-rprx-vision"}],
-                    "decryption": "none",
-                    "fallbacks": [
-                        {"dest": 3001},
-                        {"path": "/vless-argo", "dest": 3002},
-                        {"path": "/vmess-argo", "dest": 3003},
-                        {"path": "/trojan-argo", "dest": 3004}
-                    ]
-                },
-                "streamSettings": {"network": "tcp"}
+        "xhttpSettings": {
+          "host": "",
+          "path": "${uuid}-xh",
+          "mode": "auto"
+        }
+      },
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls", "quic"],
+        "metadataOnly": false
+      }
+    },
+EOF
+else
+xhp=xhptargo
+fi
+if [ -n "$vlp" ]; then
+vlp=vlpt
+if [ -z "$port_vl_re" ]; then
+port_vl_re=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_vl_re" > "$HOME/agsb/port_vl_re"
+echo "Vless-reality-vision端口：$port_vl_re"
+cat >> "$HOME/agsb/xr.json" <<EOF
+        {
+            "tag":"reality-vision",
+            "listen": "::",
+            "port": $port_vl_re,
+            "protocol": "vless",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "${uuid}",
+                        "flow": "xtls-rprx-vision"
+                    }
+                ],
+                "decryption": "none"
             },
-            {
-                "port": 3001,
-                "listen": "127.0.0.1",
-                "protocol": "vless",
-                "settings": {
-                    "clients": [{"id": UUID}],
-                    "decryption": "none"
-                },
-                "streamSettings": {"network": "ws", "security": "none"}
-            },
-            {
-                "port": 3002,
-                "listen": "127.0.0.1",
-                "protocol": "vless",
-                "settings": {
-                    "clients": [{"id": UUID, "level": 0}],
-                    "decryption": "none"
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {"path": "/vless-argo"}
-                },
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": False
+            "streamSettings": {
+                "network": "tcp",
+                "security": "reality",
+                "realitySettings": {
+                    "fingerprint": "chrome",
+                    "dest": "${ym_vl_re}:443",
+                    "serverNames": [
+                      "${ym_vl_re}"
+                    ],
+                    "privateKey": "$private_key_x",
+                    "shortIds": ["$short_id_x"]
                 }
             },
-            {
-                "port": 3003,
-                "listen": "127.0.0.1",
-                "protocol": "vmess",
+          "sniffing": {
+          "enabled": true,
+          "destOverride": ["http", "tls", "quic"],
+          "metadataOnly": false
+      }
+    },  
+EOF
+else
+vlp=vlptargo
+fi
+if [ -n "$ssp" ]; then
+ssp=sspt
+sskey=$(head -c 16 /dev/urandom | base64 -w0)
+echo "$sskey" > "$HOME/agsb/sskey"
+if [ -z "$port_ss" ]; then
+port_ss=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_ss" > "$HOME/agsb/port_ss"
+echo "Shadowsocks-2022端口：$port_ss"
+cat >> "$HOME/agsb/xr.json" <<EOF
+        {
+            "tag":"ss-2022",
+            "listen": "::",
+            "port": $port_ss,
+            "protocol": "shadowsocks",
                 "settings": {
-                    "clients": [{"id": UUID, "alterId": 0}]
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "wsSettings": {"path": "/vmess-argo"}
-                },
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": False
-                }
-            },
+                "method": "2022-blake3-aes-128-gcm",
+                "password": "$sskey",
+                "network": "tcp,udp"
+        },
+          "sniffing": {
+          "enabled": true,
+          "destOverride": ["http", "tls", "quic"],
+          "metadataOnly": false
+      }
+    },  
+EOF
+else
+ssp=ssptargo
+fi
+}
+
+installsb(){
+echo
+echo "=========启用Sing-box内核========="
+if [ ! -e "$HOME/agsb/sing-box" ]; then
+curl -Lo "$HOME/agsb/sing-box" -# --retry 2 https://github.com/yonggekkk/ArgoSB/releases/download/argosbx/sing-box-$cpu
+chmod +x "$HOME/agsb/sing-box"
+sbcore=$("$HOME/agsb/sing-box" version 2>/dev/null | awk '/version/{print $NF}')
+echo "已安装Sing-box正式版内核：$sbcore"
+fi
+cat > "$HOME/agsb/sb.json" <<EOF
+{
+"log": {
+    "disabled": false,
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+EOF
+insuuid
+command -v openssl >/dev/null 2>&1 && openssl ecparam -genkey -name prime256v1 -out "$HOME/agsb/private.key" >/dev/null 2>&1
+command -v openssl >/dev/null 2>&1 && openssl req -new -x509 -days 36500 -key "$HOME/agsb/private.key" -out "$HOME/agsb/cert.pem" -subj "/CN=www.bing.com" >/dev/null 2>&1
+if [ ! -f "$HOME/agsb/private.key" ]; then
+curl -Lso "$HOME/agsb/private.key" https://github.com/yonggekkk/ArgoSB/releases/download/argosbx/private.key
+curl -Lso "$HOME/agsb/cert.pem" https://github.com/yonggekkk/ArgoSB/releases/download/argosbx/cert.pem
+fi
+if [ -n "$hyp" ]; then
+hyp=hypt
+if [ -z "$port_hy2" ]; then
+port_hy2=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_hy2" > "$HOME/agsb/port_hy2"
+echo "Hysteria2端口：$port_hy2"
+cat >> "$HOME/agsb/sb.json" <<EOF
+    {
+        "type": "hysteria2",
+        "tag": "hy2-sb",
+        "listen": "::",
+        "listen_port": ${port_hy2},
+        "users": [
             {
-                "port": 3004,
-                "listen": "127.0.0.1",
-                "protocol": "trojan",
-                "settings": {
-                    "clients": [{"password": UUID}]
-                },
-                "streamSettings": {
-                    "network": "ws",
-                    "security": "none",
-                    "wsSettings": {"path": "/trojan-argo"}
-                },
-                "sniffing": {
-                    "enabled": True,
-                    "destOverride": ["http", "tls", "quic"],
-                    "metadataOnly": False
-                }
+                "password": "${uuid}"
             }
         ],
-        "outbounds": [
-            {"protocol": "freedom", "tag": "direct"},
-            {
-                "protocol": "vmess",
-                "tag": "youtube",
-                "settings": {
-                    "vnext": [{
-                        "address": "172.233.171.224",
-                        "port": 16416,
-                        "users": [{
-                            "id": "8c1b9bea-cb51-43bb-a65c-0af31bbbf145",
-                            "alterId": 0
-                        }]
-                    }]
-                },
-                "streamSettings": {"network": "tcp"}
-            },
-            {"protocol": "blackhole", "tag": "block"}
-        ],
-        "routing": {
-            "domainStrategy": "IPIfNonMatch",
-            "rules": [
-                {
-                    "type": "field",
-                    "domain": [
-                        "youtube.com", "youtu.be",
-                        "telegram.org",
-                        "t.me",
-                        "googlevideo.com",
-                        "ytimg.com",
-                        "gstatic.com",
-                        "googleapis.com",
-                        "ggpht.com",
-                        "googleusercontent.com"
-                    ],
-                    "outboundTag": "youtube"
-                }
-            ]
+        "ignore_client_bandwidth":false,
+        "tls": {
+            "enabled": true,
+            "alpn": [
+                "h3"
+            ],
+            "certificate_path": "$HOME/agsb/cert.pem",
+            "key_path": "$HOME/agsb/private.key"
         }
-    }'''
-
-# 替换配置
-content = content.replace(old_config, new_config)
-
-# 修改generate_links函数，添加80端口节点
-old_generate_function = '''# Generate links and subscription content
-async def generate_links(argo_domain):
-    meta_info = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True)
-    meta_info = meta_info.stdout.split('"')
-    ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
-
-    time.sleep(2)
-    VMESS = {"v": "2", "ps": f"{NAME}-{ISP}", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
- 
-    list_txt = f"""
-vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}
-  
-vmess://{ base64.b64encode(json.dumps(VMESS).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}
-    """
-    
-    with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
-        list_file.write(list_txt)
-
-    sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
-    with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
-        sub_file.write(sub_txt)
-        
-    print(sub_txt)
-    
-    print(f"{FILE_PATH}/sub.txt saved successfully")
-    
-    # Additional actions
-    send_telegram()
-    upload_nodes()
- 
-    return sub_txt'''
-
-new_generate_function = '''# Generate links and subscription content
-async def generate_links(argo_domain):
-    meta_info = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True)
-    meta_info = meta_info.stdout.split('"')
-    ISP = f"{meta_info[25]}-{meta_info[17]}".replace(' ', '_').strip()
-
-    time.sleep(2)
-    
-    # TLS节点
-    VMESS_TLS = {"v": "2", "ps": f"{NAME}-{ISP}-TLS", "add": CFIP, "port": CFPORT, "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "tls", "sni": argo_domain, "alpn": "", "fp": "chrome"}
-    
-    # 无TLS节点 (80端口)
-    VMESS_80 = {"v": "2", "ps": f"{NAME}-{ISP}-80", "add": CFIP, "port": "80", "id": UUID, "aid": "0", "scy": "none", "net": "ws", "type": "none", "host": argo_domain, "path": "/vmess-argo?ed=2560", "tls": "", "sni": "", "alpn": "", "fp": ""}
- 
-    list_txt = f"""
-vless://{UUID}@{CFIP}:{CFPORT}?encryption=none&security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
-  
-vmess://{ base64.b64encode(json.dumps(VMESS_TLS).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-TLS
-
-vless://{UUID}@{CFIP}:80?encryption=none&security=none&type=ws&host={argo_domain}&path=%2Fvless-argo%3Fed%3D2560#{NAME}-{ISP}-80
-
-vmess://{ base64.b64encode(json.dumps(VMESS_80).encode('utf-8')).decode('utf-8')}
-
-trojan://{UUID}@{CFIP}:80?security=none&type=ws&host={argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#{NAME}-{ISP}-80
-    """
-    
-    with open(os.path.join(FILE_PATH, 'list.txt'), 'w', encoding='utf-8') as list_file:
-        list_file.write(list_txt)
-
-    sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
-    with open(os.path.join(FILE_PATH, 'sub.txt'), 'w', encoding='utf-8') as sub_file:
-        sub_file.write(sub_txt)
-        
-    print(sub_txt)
-    
-    print(f"{FILE_PATH}/sub.txt saved successfully")
-    
-    # Additional actions
-    send_telegram()
-    upload_nodes()
- 
-    return sub_txt'''
-
-# 替换generate_links函数
-content = content.replace(old_generate_function, new_generate_function)
-
-# 写回文件
-with open('app.py', 'w', encoding='utf-8') as f:
-    f.write(content)
-
-print("YouTube分流配置和80端口节点已成功添加")
+    },
 EOF
+else
+hyp=hyptargo
+fi
+if [ -n "$tup" ]; then
+tup=tupt
+if [ -z "$port_tu" ]; then
+port_tu=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_tu" > "$HOME/agsb/port_tu"
+echo "Tuic端口：$port_tu"
+cat >> "$HOME/agsb/sb.json" <<EOF
+        {
+            "type":"tuic",
+            "tag": "tuic5-sb",
+            "listen": "::",
+            "listen_port": ${port_tu},
+            "users": [
+                {
+                    "uuid": "${uuid}",
+                    "password": "${uuid}"
+                }
+            ],
+            "congestion_control": "bbr",
+            "tls":{
+                "enabled": true,
+                "alpn": [
+                    "h3"
+                ],
+                "certificate_path": "$HOME/agsb/cert.pem",
+                "key_path": "$HOME/agsb/private.key"
+            }
+        },
+EOF
+else
+tup=tuptargo
+fi
+if [ -n "$anp" ]; then
+anp=anpt
+if [ -z "$port_an" ]; then
+port_an=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_an" > "$HOME/agsb/port_an"
+echo "Anytls端口：$port_an"
+cat >> "$HOME/agsb/sb.json" <<EOF
+        {
+            "type":"anytls",
+            "tag":"anytls-sb",
+            "listen":"::",
+            "listen_port":${port_an},
+            "users":[
+                {
+                  "password":"${uuid}"
+                }
+            ],
+            "padding_scheme":[],
+            "tls":{
+                "enabled": true,
+                "certificate_path": "$HOME/agsb/cert.pem",
+                "key_path": "$HOME/agsb/private.key"
+            }
+        },
+EOF
+else
+anp=anptargo
+fi
+}
 
-python3 youtube_patch.py
-rm youtube_patch.py
+xrsbvm(){
+if [ -n "$vmp" ]; then
+vmp=vmpt
+if [ -z "$port_vm_ws" ]; then
+port_vm_ws=$(shuf -i 10000-65535 -n 1)
+fi
+echo "$port_vm_ws" > "$HOME/agsb/port_vm_ws"
+echo "Vmess-ws端口：$port_vm_ws"
+if [ -n "$cdnym" ]; then
+echo "$cdnym" > "$HOME/agsb/cdnym"
+echo "80系CDN或者回源CDN的host域名(已托管在CF)：$cdnym"
+fi
+if [ -e "$HOME/agsb/xray" ]; then
+cat >> "$HOME/agsb/xr.json" <<EOF
+        {
+            "tag": "vmess-xr",
+            "listen": "::",
+            "port": ${port_vm_ws},
+            "protocol": "vmess",
+            "settings": {
+                "clients": [
+                    {
+                        "id": "${uuid}"
+                    }
+                ]
+            },
+            "streamSettings": {
+                "network": "ws",
+                "security": "none",
+                "wsSettings": {
+                  "path": "${uuid}-vm"
+            }
+        },
+            "sniffing": {
+            "enabled": true,
+            "destOverride": ["http", "tls", "quic"],
+            "metadataOnly": false
+            }
+         }, 
+EOF
+else
+cat >> "$HOME/agsb/sb.json" <<EOF
+{
+        "type": "vmess",
+        "tag": "vmess-sb",
+        "listen": "::",
+        "listen_port": ${port_vm_ws},
+        "users": [
+            {
+                "uuid": "${uuid}",
+                "alterId": 0
+            }
+        ],
+        "transport": {
+            "type": "ws",
+            "path": "${uuid}-vm",
+            "max_early_data":2048,
+            "early_data_header_name": "Sec-WebSocket-Protocol"
+        }
+    },
+EOF
+fi
+else
+vmp=vmptargo
+fi
+}
 
-echo -e "${GREEN}YouTube分流和80端口节点已集成${NC}"
+xrsbout(){
+if [ -e "$HOME/agsb/xr.json" ]; then
+sed -i '${s/,\s*$//}' "$HOME/agsb/xr.json"
+cat >> "$HOME/agsb/xr.json" <<EOF
+  ],
+  "outbounds": [
+    {
+      "protocol": "freedom",
+      "tag": "direct",
+      "settings": {
+      "domainStrategy":"${xrip}"
+     }
+    },
+    {
+      "tag": "warp-out",
+      "protocol": "wireguard",
+      "settings": {
+        "secretKey": "COAYqKrAXaQIGL8+Wkmfe39r1tMMR80JWHVaF443XFQ=",
+        "address": [
+          "172.16.0.2/32",
+          "2606:4700:110:8eb1:3b27:e65e:3645:97b0/128"
+        ],
+        "peers": [
+          {
+            "publicKey": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+            "allowedIPs": [
+              "0.0.0.0/0",
+              "::/0"
+            ],
+            "endpoint": "${xendip}:2408"
+          }
+        ],
+        "reserved": [134, 63, 85],
+        "domainStrategy":"${xrip}"
+        }
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "network": "tcp,udp",
+        "outboundTag": "${xouttag}"
+      }
+    ]
+  }
+}
+EOF
+nohup "$HOME/agsb/xray" run -c "$HOME/agsb/xr.json" >/dev/null 2>&1 &
+fi
+if [ -e "$HOME/agsb/sb.json" ]; then
+sed -i '${s/,\s*$//}' "$HOME/agsb/sb.json"
+cat >> "$HOME/agsb/sb.json" <<EOF
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "endpoints": [
+    {
+      "type": "wireguard",
+      "tag": "warp-out",
+      "address": [
+        "172.16.0.2/32",
+        "2606:4700:110:8eb1:3b27:e65e:3645:97b0/128"
+      ],
+      "private_key": "COAYqKrAXaQIGL8+Wkmfe39r1tMMR80JWHVaF443XFQ=",
+      "peers": [
+        {
+          "address": "${sendip}",
+          "port": 2408,
+          "public_key": "bmXOC+F1FxEMF9dyiK2H5/1SUtzH0JuVo51h2wPfgyo=",
+          "allowed_ips": [
+            "0.0.0.0/0",
+            "::/0"
+          ],
+          "reserved": [134, 63, 85]
+        }
+      ]
+    }
+  ],
+  "route": {
+    "rules": [
+       {
+          "action": "sniff"
+        },
+       {
+        "action": "resolve",
+         "strategy": "${sbip}"
+       },
+      {
+        "outbound": "${souttag}"
+      }
+    ]
+  }
+}
+EOF
+nohup "$HOME/agsb/sing-box" run -c "$HOME/agsb/sb.json" >/dev/null 2>&1 &
+fi
+}
+killstart(){
+for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsb/c|/agsb/s|/agsb/x'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null; fi; fi; done
+kill -15 $(pgrep -f 'agsb/s' 2>/dev/null) $(pgrep -f 'agsb/c' 2>/dev/null) $(pgrep -f 'agsb/x' 2>/dev/null) >/dev/null 2>&1
 
-# 先清理可能存在的进程
-pkill -f "python3 app.py" > /dev/null 2>&1
-sleep 2
-
-# 启动服务并获取PID
-python3 app.py > app.log 2>&1 &
-APP_PID=$!
-
-# 验证PID获取成功
-if [ -z "$APP_PID" ] || [ "$APP_PID" -eq 0 ]; then
-    echo -e "${RED}获取进程PID失败，尝试直接启动${NC}"
-    nohup python3 app.py > app.log 2>&1 &
-    sleep 2
-    APP_PID=$(pgrep -f "python3 app.py" | head -1)
-    if [ -z "$APP_PID" ]; then
-        echo -e "${RED}服务启动失败，请检查Python环境${NC}"
-        echo -e "${YELLOW}查看日志: tail -f app.log${NC}"
-        exit 1
-    fi
+# 停止并重启 Hugging Face 保活任务
+pkill -f "$HOME/agsb/keep_alive_task.sh" >/dev/null 2>&1
+if [ "$KEEP_ALIVE_HF_ENABLED" = "true" ]; then
+    nohup "$HOME/agsb/keep_alive_task.sh" >/dev/null 2>&1 &
+    echo "Hugging Face API keep-alive task restarted."
 fi
 
-echo -e "${GREEN}服务已在后台启动，PID: $APP_PID${NC}"
-echo -e "${YELLOW}日志文件: $(pwd)/app.log${NC}"
-
-# 如果设置了保活URL，则启动保活任务
-KEEPALIVE_PID=""
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    echo -e "${BLUE}正在创建并启动 Hugging Face API 保活任务...${NC}"
-    # 创建保活任务脚本
-    echo "#!/bin/bash" > keep_alive_task.sh
-    echo "while true; do" >> keep_alive_task.sh
-    # 核心修改：优先尝试Spaces API，如果失败再尝试Models API
-    echo "    # 尝试 Spaces API" >> keep_alive_task.sh
-    echo "    status_code=\$(curl -s -o /dev/null -w \"%{http_code}\" --header \"Authorization: Bearer $HF_TOKEN\" \"https://huggingface.co/api/spaces/$HF_REPO_ID\")" >> keep_alive_task.sh
-    echo "    if [ \"\$status_code\" -eq 200 ]; then" >> keep_alive_task.sh
-    echo "        echo \"Hugging Face API 保活成功 (Space: $HF_REPO_ID, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "    else" >> keep_alive_task.sh
-    echo "        # 尝试 Models API" >> keep_alive_task.sh
-    echo "        status_code_model=\$(curl -s -o /dev/null -w \"%{http_code}\" --header \"Authorization: Bearer $HF_TOKEN\" \"https://huggingface.co/api/models/$HF_REPO_ID\")" >> keep_alive_task.sh
-    echo "        if [ \"\$status_code_model\" -eq 200 ]; then" >> keep_alive_task.sh
-    echo "            echo \"Hugging Face API 保活成功 (Model: $HF_REPO_ID, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "        else" >> keep_alive_task.sh
-    echo "            echo \"Hugging Face API 保活失败 (仓库: $HF_REPO_ID, Space API状态: \$status_code, Model API状态: \$status_code_model) - \$(date '+%Y-%m-%d %H:%M:%S')\" > keep_alive_status.log" >> keep_alive_task.sh
-    echo "        fi" >> keep_alive_task.sh
-    echo "    fi" >> keep_alive_task.sh
-    echo "    sleep 120" >> keep_alive_task.sh
-    echo "done" >> keep_alive_task.sh
-    chmod +x keep_alive_task.sh
-    
-    # 使用nohup后台运行保活任务
-    nohup ./keep_alive_task.sh >/dev/null 2>&1 &
-    KEEPALIVE_PID=$!
-    echo -e "${GREEN}Hugging Face API 保活任务已启动 (PID: $KEEPALIVE_PID)。${NC}"
+nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &
+nohup $HOME/agsb/xray run -c $HOME/agsb/xr.json >/dev/null 2>&1 &
+if [ -e "$HOME/agsb/sbargotoken.log" ]; then
+nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsb/sbargotoken.log 2>/dev/null) >/dev/null 2>&1 &
+else
+if [ -e "$HOME/agsb/xr.json" ] && [ -e "$HOME/agsb/argo.log" ]; then
+nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(grep -A2 vmess-xr $HOME/agsb/xr.json | tail -1 | tr -cd 0-9) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsb/argo.log 2>&1 &
+elif [ -e "$HOME/agsb/sb.json" ] && [ -e "$HOME/agsb/argo.log" ]; then
+nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(grep -A2 vmess-sb $HOME/agsb/sb.json | tail -1 | tr -cd 0-9) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsb/argo.log 2>&1 &
 fi
-
-
-echo -e "${BLUE}等待服务启动...${NC}"
+fi
+sleep 6
+}
+ins(){
+if [ "$hyp" != yes ] && [ "$tup" != yes ] && [ "$anp" != yes ]; then
+installxray
+xrsbvm
+warpsx
+xrsbout
+hyp="hyptargo"; tup="tuptargo"; anp="anptargo"
+elif [ "$xhp" != yes ] && [ "$vlp" != yes ] && [ "$ssp" != yes ]; then
+installsb
+xrsbvm
+warpsx
+xrsbout
+xhp="xhptargo"; vlp="vlptargo"; ssp="ssptargo"
+else
+installsb
+installxray
+xrsbvm
+xrsbout
+fi
+if [ -n "$argo" ] && [ -n "$vmag" ]; then
+echo
+echo "=========启用Cloudflared-argo内核========="
+if [ ! -e "$HOME/agsb/cloudflared" ]; then
+argocore=$(curl -Ls https://data.jsdelivr.com/v1/package/gh/cloudflare/cloudflared | grep -Eo '"[0-9.]+"' | sed -n 1p | tr -d '",')
+echo "下载Cloudflared-argo最新正式版内核：$argocore"
+curl -Lo "$HOME/agsb/cloudflared" -# --retry 2 https://github.com/cloudflare/cloudflared/releases/download/argosbx/cloudflared-linux-$cpu
+chmod +x "$HOME/agsb/cloudflared"
+fi
+if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+name='固定'
+nohup "$HOME/agsb/cloudflared" tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token "${ARGO_AUTH}" >/dev/null 2>&1 &
+echo "${ARGO_DOMAIN}" > "$HOME/agsb/sbargoym.log"
+echo "${ARGO_AUTH}" > "$HOME/agsb/sbargotoken.log"
+else
+name='临时'
+nohup "$HOME/agsb/cloudflared" tunnel --url http://localhost:"${port_vm_ws}" --edge-ip-version auto --no-autoupdate --protocol http2 > "$HOME/agsb/argo.log" 2>&1 &
+fi
+echo "申请Argo$name隧道中……请稍等"
 sleep 8
-
-# 检查服务是否正常运行
-if ! ps -p "$APP_PID" > /dev/null 2>&1; then
-    echo -e "${RED}服务启动失败，请检查日志${NC}"
-    echo -e "${YELLOW}查看日志: tail -f app.log${NC}"
-    echo -e "${YELLOW}检查端口占用: netstat -tlnp | grep :3000${NC}"
-    exit 1
+if [ -n "${argodomain}" ]; then
+echo "Argo$name隧道申请成功"
+else
+echo "Argo$name隧道申请失败，请稍后再试"
+fi
 fi
 
-echo -e "${GREEN}服务运行正常${NC}"
-
-SERVICE_PORT=$(grep "PORT = int" app.py | grep -o "or [0-9]*" | cut -d" " -f2)
-CURRENT_UUID=$(grep "UUID = " app.py | head -1 | cut -d"'" -f2)
-SUB_PATH_VALUE=$(grep "SUB_PATH = " app.py | cut -d"'" -f4)
-
-echo -e "${BLUE}等待节点信息生成...${NC}"
-echo -e "${YELLOW}正在等待Argo隧道建立和节点生成，请耐心等待...${NC}"
-
-# 循环等待节点信息生成，最多等待10分钟
-MAX_WAIT=600  # 10分钟
-WAIT_COUNT=0
-NODE_INFO=""
-
-while [ $WAIT_COUNT -lt $MAX_WAIT ]; do
-    if [ -f ".cache/sub.txt" ]; then
-        NODE_INFO=$(cat .cache/sub.txt 2>/dev/null)
-        if [ -n "$NODE_INFO" ]; then
-            echo -e "${GREEN}节点信息已生成！${NC}"
-            break
-        fi
-    elif [ -f "sub.txt" ]; then
-        NODE_INFO=$(cat sub.txt 2>/dev/null)
-        if [ -n "$NODE_INFO" ]; then
-            echo -e "${GREEN}节点信息已生成！${NC}"
-            break
+# Hugging Face 保活任务集成
+if [ "$KEEP_ALIVE_HF_ENABLED" = "true" ]; then
+    echo "Creating and starting Hugging Face API keep-alive task..."
+    cat > "$HOME/agsb/keep_alive_task.sh" <<EOF
+#!/bin/bash
+while true; do
+    # 尝试 Spaces API
+    status_code=\$(curl -s -o /dev/null -w "%{http_code}" --header "Authorization: Bearer $HF_TOKEN_VAL" "https://huggingface.co/api/spaces/$HF_REPO_ID_VAL")
+    if [ "\$status_code" -eq 200 ]; then
+        echo "Hugging Face API 保活成功 (Space: $HF_REPO_ID_VAL, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')" > "$HOME/agsb/keep_alive_status.log"
+    else
+        # 尝试 Models API
+        status_code_model=\$(curl -s -o /dev/null -w "%{http_code}" --header "Authorization: Bearer $HF_TOKEN_VAL" "https://huggingface.co/api/models/$HF_REPO_ID_VAL")
+        if [ "\$status_code_model" -eq 200 ]; then
+            echo "Hugging Face API 保活成功 (Model: $HF_REPO_ID_VAL, 状态码: 200) - \$(date '+%Y-%m-%d %H:%M:%S')" > "$HOME/agsb/keep_alive_status.log"
+        else
+            echo "Hugging Face API 保活失败 (仓库: $HF_REPO_ID_VAL, Space API状态: \$status_code, Model API状态: \$status_code_model) - \$(date '+%Y-%m-%d %H:%M:%S')" > "$HOME/agsb/keep_alive_status.log"
         fi
     fi
-    
-    # 每30秒显示一次等待提示
-    if [ $((WAIT_COUNT % 30)) -eq 0 ]; then
-        MINUTES=$((WAIT_COUNT / 60))
-        SECONDS=$((WAIT_COUNT % 60))
-        echo -e "${YELLOW}已等待 ${MINUTES}分${SECONDS}秒，继续等待节点生成...${NC}"
-        echo -e "${BLUE}提示: Argo隧道建立需要时间，请继续等待${NC}"
-    fi
-    
-    sleep 5
-    WAIT_COUNT=$((WAIT_COUNT + 5))
+    sleep 120
 done
-
-# 检查是否成功获取到节点信息
-if [ -z "$NODE_INFO" ]; then
-    echo -e "${RED}等待超时！节点信息未能在10分钟内生成${NC}"
-    echo -e "${YELLOW}可能原因：${NC}"
-    echo -e "1. 网络连接问题"
-    echo -e "2. Argo隧道建立失败"
-    echo -e "3. 服务配置错误"
-    echo
-    echo -e "${BLUE}建议操作：${NC}"
-    echo -e "1. 查看日志: ${YELLOW}tail -f $(pwd)/app.log${NC}"
-    echo -e "2. 检查服务: ${YELLOW}ps aux | grep python3${NC}"
-    echo -e "3. 重新运行脚本"
-    echo
-    echo -e "${YELLOW}服务信息：${NC}"
-    echo -e "进程PID: ${BLUE}$APP_PID${NC}"
-    echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
-    echo -e "日志文件: ${YELLOW}$(pwd)/app.log${NC}"
-    exit 1
+EOF
+    chmod +x "$HOME/agsb/keep_alive_task.sh"
+    nohup "$HOME/agsb/keep_alive_task.sh" >/dev/null 2>&1 &
+    KEEPALIVE_PID=$!
+    echo "Hugging Face API keep-alive task started (PID: $KEEPALIVE_PID)."
 fi
 
 echo
-echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}                      部署完成！                      ${NC}"
-echo -e "${GREEN}========================================${NC}"
-echo
-
-echo -e "${YELLOW}=== 服务信息 ===${NC}"
-echo -e "服务状态: ${GREEN}运行中${NC}"
-echo -e "主服务PID: ${BLUE}$APP_PID${NC}"
-if [ -n "$KEEPALIVE_PID" ]; then
-    echo -e "保活服务PID: ${BLUE}$KEEPALIVE_PID${NC}"
+if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(s|x)' || pgrep -f 'agsb/(s|x)' >/dev/null 2>&1 ; then
+[ -f ~/.bashrc ] || touch ~/.bashrc
+sed -i '/yonggekkk/d' ~/.bashrc
+# 修改此处，增加hftoken和hfrepo变量的导出
+echo "if ! find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(s|x)' && ! pgrep -f 'agsb/(s|x)' >/dev/null 2>&1; then echo '检测到系统可能中断过，建议在SSH对话框输入 reboot 重启下服务器。现在自动执行ArgoSB脚本的节点恢复操作，请稍等……'; sleep 6; export cdnym=\"${cdnym}\" name=\"${name}\" ipyx=\"${ipyx}\" ippz=\"${ippz}\" argo=\"${argo}\" uuid=\"${uuid}\" $wap=\"${warp}\" $xhp=\"${port_xh}\" $ssp=\"${port_ss}\" $anp=\"${port_an}\" $vlp=\"${port_vl_re}\" $vmp=\"${port_vm_ws}\" $hyp=\"${port_hy2}\" $tup=\"${port_tu}\" reym=\"${ym_vl_re}\" agn=\"${ARGO_DOMAIN}\" agk=\"${ARGO_AUTH}\" hftoken=\"${HF_TOKEN_VAL}\" hfrepo=\"${HF_REPO_ID_VAL}\"; bash <(curl -Ls https://raw.githubusercontent.com/yonggekkk/argosb/main/argosb.sh); fi" >> ~/.bashrc
+COMMAND="agsb"
+SCRIPT_PATH="$HOME/bin/$COMMAND"
+mkdir -p "$HOME/bin"
+curl -Ls https://raw.githubusercontent.com/yonggekkk/argosb/main/argosb.sh > "$SCRIPT_PATH"
+chmod +x "$SCRIPT_PATH"
+sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+grep -qxF 'source ~/.bashrc' ~/.bash_profile 2>/dev/null || echo 'source ~/.bashrc' >> ~/.bash_profile
+. ~/.bashrc 2>/dev/null
+crontab -l > /tmp/crontab.tmp 2>/dev/null
+sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp
+sed -i '/agsb\/xray/d' /tmp/crontab.tmp
+# 删除旧的保活任务cron条目
+sed -i '/agsb\/keep_alive_task.sh/d' /tmp/crontab.tmp
+if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsb/s' || pgrep -f 'agsb/s' >/dev/null 2>&1 ; then
+echo '@reboot /bin/sh -c "nohup $HOME/agsb/sing-box run -c $HOME/agsb/sb.json >/dev/null 2>&1 &"' >> /tmp/crontab.tmp
 fi
-echo -e "服务端口: ${BLUE}$SERVICE_PORT${NC}"
-echo -e "UUID: ${BLUE}$CURRENT_UUID${NC}"
-echo -e "订阅路径: ${BLUE}/$SUB_PATH_VALUE${NC}"
-echo
-
-echo -e "${YELLOW}=== 访问地址 ===${NC}"
-if command -v curl &> /dev/null; then
-    PUBLIC_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "获取失败")
-    if [ "$PUBLIC_IP" != "获取失败" ]; then
-        echo -e "订阅地址: ${GREEN}http://$PUBLIC_IP:$SERVICE_PORT/$SUB_PATH_VALUE${NC}"
-        echo -e "管理面板: ${GREEN}http://$PUBLIC_IP:$SERVICE_PORT${NC}"
-    fi
+if find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -q 'agsb/x' || pgrep -f 'agsb/x' >/dev/null 2>&1 ; then
+echo '@reboot /bin/sh -c "nohup $HOME/agsb/xray run -c $HOME/agsb/xr.json >/dev/null 2>&1 &"' >> /tmp/crontab.tmp
 fi
-echo -e "本地订阅: ${GREEN}http://localhost:$SERVICE_PORT/$SUB_PATH_VALUE${NC}"
-echo -e "本地面板: ${GREEN}http://localhost:$SERVICE_PORT${NC}"
-echo
-
-echo -e "${YELLOW}=== 节点信息 ===${NC}"
-DECODED_NODES=$(echo "$NODE_INFO" | base64 -d 2>/dev/null || echo "$NODE_INFO")
-
-echo -e "${GREEN}节点配置:${NC}"
-echo "$DECODED_NODES"
-echo
-
-echo -e "${GREEN}订阅链接:${NC}"
-echo "$NODE_INFO"
-echo
-
-SAVE_INFO="========================================
-                      节点信息保存                      
-========================================
-
-部署时间: $(date)
-UUID: $CURRENT_UUID
-服务端口: $SERVICE_PORT
-订阅路径: /$SUB_PATH_VALUE
-
-=== 访问地址 ==="
-
-if command -v curl &> /dev/null; then
-    PUBLIC_IP=$(curl -s https://api.ipify.org 2>/dev/null || echo "获取失败")
-    if [ "$PUBLIC_IP" != "获取失败" ]; then
-        SAVE_INFO="${SAVE_INFO}
-订阅地址: http://$PUBLIC_IP:$SERVICE_PORT/$SUB_PATH_VALUE
-管理面板: http://$PUBLIC_IP:$SERVICE_PORT"
-    fi
+sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
+if [ -n "$argo" ] && [ -n "$vmag" ]; then
+if [ -n "${ARGO_DOMAIN}" ] && [ -n "${ARGO_AUTH}" ]; then
+echo '@reboot /bin/sh -c "nohup $HOME/agsb/cloudflared tunnel --no-autoupdate --edge-ip-version auto --protocol http2 run --token $(cat $HOME/agsb/sbargotoken.log 2>/dev/null) >/dev/null 2>&1 &"' >> /tmp/crontab.tmp
+else
+if [ -e "$HOME/agsb/xray" ]; then
+echo '@reboot /bin/sh -c "nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(grep -A2 vmess-xr $HOME/agsb/xr.json | tail -1 | tr -cd 0-9) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsb/argo.log 2>&1 &"' >> /tmp/crontab.tmp
+else
+echo '@reboot /bin/sh -c "nohup $HOME/agsb/cloudflared tunnel --url http://localhost:$(grep -A2 vmess-sb $HOME/agsb/sb.json | tail -1 | tr -cd 0-9) --edge-ip-version auto --no-autoupdate --protocol http2 > $HOME/agsb/argo.log 2>&1 &"' >> /tmp/crontab.tmp
+fi
+fi
+fi
+# 添加保活任务到cron
+if [ "$KEEP_ALIVE_HF_ENABLED" = "true" ]; then
+    echo '@reboot /bin/sh -c "nohup $HOME/agsb/keep_alive_task.sh >/dev/null 2>&1 &"' >> /tmp/crontab.tmp
 fi
 
-SAVE_INFO="${SAVE_INFO}
-本地订阅: http://localhost:$SERVICE_PORT/$SUB_PATH_VALUE
-本地面板: http://localhost:$SERVICE_PORT
-
-=== 节点信息 ===
-$DECODED_NODES
-
-=== 订阅链接 ===
-$NODE_INFO
-
-=== 管理命令 ===
-查看日志: tail -f $(pwd)/app.log
-停止主服务: kill $APP_PID
-重启主服务: kill $APP_PID && nohup python3 app.py > app.log 2>&1 &
-查看进程: ps aux | grep app.py"
-
-if [ "$KEEP_ALIVE_HF" = "true" ]; then
-    SAVE_INFO="${SAVE_INFO}
-停止保活服务: pkill -f keep_alive_task.sh && rm keep_alive_task.sh keep_alive_status.log"
+crontab /tmp/crontab.tmp 2>/dev/null
+rm /tmp/crontab.tmp
+echo "ArgoSB脚本进程启动成功，安装完毕" && sleep 2
+else
+echo "ArgoSB脚本进程未启动，安装失败" && exit
 fi
-
-SAVE_INFO="${SAVE_INFO}
-
-=== 分流说明 ===
-- 已集成YouTube分流优化到xray配置
-- YouTube相关域名自动走专用线路
-- 无需额外配置，透明分流"
-
-echo "$SAVE_INFO" > "$NODE_INFO_FILE"
-echo -e "${GREEN}节点信息已保存到 $NODE_INFO_FILE${NC}"
-echo -e "${YELLOW}使用脚本选择选项3或运行带-v参数可随时查看节点信息${NC}"
-
-echo -e "${YELLOW}=== 重要提示 ===${NC}"
-echo -e "${GREEN}部署已完成，节点信息已成功生成${NC}"
-echo -e "${GREEN}可以立即使用订阅地址添加到客户端${NC}"
-echo -e "${GREEN}YouTube分流已集成到xray配置，无需额外设置${NC}"
-echo -e "${GREEN}服务将持续在后台运行${NC}"
+}
+cip(){
+ipbest(){
+serip=$(curl -s4m5 icanhazip.com -k || curl -s6m5 icanhazip.com -k)
+if echo "$serip" | grep -q ':'; then
+server_ip="[$serip]"
+echo "$server_ip" > "$HOME/agsb/server_ip.log"
+else
+server_ip="$serip"
+echo "$server_ip" > "$HOME/agsb/server_ip.log"
+fi
+}
+ipchange(){
+v4v6
+if [ -z "$v4" ]; then
+vps_ipv4='无IPV4'
+vps_ipv6="$v6"
+elif [ -n "$v4" ] && [ -n "$v6" ]; then
+vps_ipv4="$v4"
+vps_ipv6="$v6"
+else
+vps_ipv4="$v4"
+vps_ipv6='无IPV6'
+fi
+if echo "$v6" | grep -q '^2a09'; then
+w6="【WARP】"
+fi
+if echo "$v4" | grep -q '^104.28'; then
+w4="【WARP】"
+fi
 echo
+echo "=========当前服务器本地IP情况========="
+echo "本地IPV4地址：$vps_ipv4 $w4"
+echo "本地IPV6地址：$vps_ipv6 $w6"
+echo
+sleep 2
+if [ "$ippz" = "4" ]; then
+if [ -z "$v4" ]; then
+ipbest
+else
+server_ip="$v4"
+echo "$server_ip" > "$HOME/agsb/server_ip.log"
+fi
+elif [ "$ippz" = "6" ]; then
+if [ -z "$v6" ]; then
+ipbest
+else
+server_ip="[$v6]"
+echo "$server_ip" > "$HOME/agsb/server_ip.log"
+fi
+else
+ipbest
+fi
+}
+warpcheck
+if ! echo "$wgcfv4" | grep -qE 'on|plus' && ! echo "$wgcfv6" | grep -qE 'on|plus'; then
+ipchange
+else
+systemctl stop wg-quick@wgcf >/dev/null 2>&1
+kill -15 $(pgrep warp-go) >/dev/null 2>&1 && sleep 2
+ipchange
+systemctl start wg-quick@wgcf >/dev/null 2>&1
+systemctl restart warp-go >/dev/null 2>&1
+systemctl enable warp-go >/dev/null 2>&1
+systemctl start warp-go >/dev/null 2>&1
+fi
+rm -rf "$HOME/agsb/jh.txt"
+uuid=$(cat "$HOME/agsb/uuid")
+server_ip=$(cat "$HOME/agsb/server_ip.log")
+sxname=$(cat "$HOME/agsb/name" 2>/dev/null)
+vmcdnym=$(cat "$HOME/agsb/cdnym" 2>/dev/null)
+echo "*********************************************************"
+echo "*********************************************************"
+echo "ArgoSB脚本输出节点配置如下："
+echo
+case "$server_ip" in
+104.28*|\[2a09*) echo "检测到有WARP的IP作为客户端地址 (104.28或者2a09开头的IP)，请在客户端上把WARP的IP手动更换为VPS本地IPV4或者IPV6地址" && sleep 3 ;;
+esac
+echo
+if [ -e "$HOME/agsb/xray" ]; then
+ym_vl_re=$(cat "$HOME/agsb/ym_vl_re" 2>/dev/null)
+private_key_x=$(cat "$HOME/agsb/xrk/private_key" 2>/dev/null)
+public_key_x=$(cat "$HOME/agsb/xrk/public_key" 2>/dev/null)
+short_id_x=$(cat "$HOME/agsb/xrk/short_id" 2>/dev/null)
+sskey=$(cat "$HOME/agsb/sskey" 2>/dev/null)
+fi
+if [ -f "$HOME/agsb/port_xh" ]; then
+echo "💣【 vless-xhttp-reality 】节点信息如下："
+port_xh=$(cat "$HOME/agsb/port_xh")
+vl_xh_link="vless://$uuid@$server_ip:$port_xh?encryption=none&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=xhttp&path=$uuid-xh&mode=auto#${sxname}vl-xhttp-reality-$hostname"
+echo "$vl_xh_link" >> "$HOME/agsb/jh.txt"
+echo "$vl_xh_link"
+echo
+fi
+if [ -f "$HOME/agsb/port_vl_re" ]; then
+echo "💣【 vless-reality-vision 】节点信息如下："
+port_vl_re=$(cat "$HOME/agsb/port_vl_re")
+vl_link="vless://$uuid@$server_ip:$port_vl_re?encryption=none&flow=xtls-rprx-vision&security=reality&sni=$ym_vl_re&fp=chrome&pbk=$public_key_x&sid=$short_id_x&type=tcp&headerType=none#${sxname}vl-reality-vision-$hostname"
+echo "$vl_link" >> "$HOME/agsb/jh.txt"
+echo "$vl_link"
+echo
+fi
+if [ -f "$HOME/agsb/port_ss" ]; then
+echo "💣【 Shadowsocks-2022 】节点信息如下："
+port_ss=$(cat "$HOME/agsb/port_ss")
+ss_link="ss://$(echo -n "2022-blake3-aes-128-gcm:$sskey@$server_ip:$port_ss" | base64 -w0)#${sxname}Shadowsocks-2022-$hostname"
+echo "$ss_link" >> "$HOME/agsb/jh.txt"
+echo "$ss_link"
+echo
+fi
+if [ -f "$HOME/agsb/port_vm_ws" ]; then
+echo "💣【 vmess-ws 】节点信息如下："
+port_vm_ws=$(cat "$HOME/agsb/port_vm_ws")
+vm_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-$hostname\", \"add\": \"$server_ip\", \"port\": \"$port_vm_ws\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"www.bing.com\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vm_link" >> "$HOME/agsb/jh.txt"
+echo "$vm_link"
+echo
+if [ -f "$HOME/agsb/cdnym" ]; then
+echo "💣【 vmess-ws 】80系CDN或者回源CDN节点信息如下："
+echo "注：优选IP地址或者端口可自行手动修改"
+vm_cdn_link="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vm-ws-cdn-$hostname\", \"add\": \"104.16.0.0\", \"port\": \"80\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$vmcdnym\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vm_cdn_link" >> "$HOME/agsb/jh.txt"
+echo "$vm_cdn_link"
+echo
+fi
+fi
+if [ -f "$HOME/agsb/port_an" ]; then
+echo "💣【 AnyTLS 】节点信息如下："
+port_an=$(cat "$HOME/agsb/port_an")
+an_link="anytls://$uuid@$server_ip:$port_an?insecure=1&allowInsecure=1#${sxname}anytls-$hostname"
+echo "$an_link" >> "$HOME/agsb/jh.txt"
+echo "$an_link"
+echo
+fi
+if [ -f "$HOME/agsb/port_hy2" ]; then
+echo "💣【 Hysteria2 】节点信息如下："
+port_hy2=$(cat "$HOME/agsb/port_hy2")
+hy2_link="hysteria2://$uuid@$server_ip:$port_hy2?security=tls&alpn=h3&insecure=1&sni=www.bing.com#${sxname}hy2-$hostname"
+echo "$hy2_link" >> "$HOME/agsb/jh.txt"
+echo "$hy2_link"
+echo
+fi
+if [ -f "$HOME/agsb/port_tu" ]; then
+echo "💣【 Tuic 】节点信息如下："
+port_tu=$(cat "$HOME/agsb/port_tu")
+tuic5_link="tuic://$uuid:$uuid@$server_ip:$port_tu?congestion_control=bbr&udp_relay_mode=native&alpn=h3&sni=www.bing.com&allow_insecure=1&allowInsecure=1#${sxname}tuic-$hostname"
+echo "$tuic5_link" >> "$HOME/agsb/jh.txt"
+echo "$tuic5_link"
+echo
+fi
+argodomain=$(cat "$HOME/agsb/sbargoym.log" 2>/dev/null)
+[ -z "$argodomain" ] && argodomain=$(grep -a trycloudflare.com "$HOME/agsb/argo.log" 2>/dev/null | awk 'NR==2{print}' | awk -F// '{print $2}' | awk '{print $1}')
+if [ -n "$argodomain" ]; then
+vmatls_link1="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-443\", \"add\": \"104.16.0.0\", \"port\": \"443\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link1" >> "$HOME/agsb/jh.txt"
+vmatls_link2="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-8443\", \"add\": \"104.17.0.0\", \"port\": \"8443\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link2" >> "$HOME/agsb/jh.txt"
+vmatls_link3="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-2053\", \"add\": \"104.18.0.0\", \"port\": \"2053\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link3" >> "$HOME/agsb/jh.txt"
+vmatls_link4="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-2083\", \"add\": \"104.19.0.0\", \"port\": \"2083\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link4" >> "$HOME/agsb/jh.txt"
+vmatls_link5="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-2087\", \"add\": \"104.20.0.0\", \"port\": \"2087\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link5" >> "$HOME/agsb/jh.txt"
+vmatls_link6="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-tls-argo-$hostname-2096\", \"add\": \"[2606:4700::0]\", \"port\": \"2096\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"tls\", \"sni\": \"$argodomain\", \"alpn\": \"\", \"fp\": \"\"}" | base64 -w0)"
+echo "$vmatls_link6" >> "$HOME/agsb/jh.txt"
+vma_link7="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-80\", \"add\": \"104.21.0.0\", \"port\": \"80\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link7" >> "$HOME/agsb/jh.txt"
+vma_link8="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-8080\", \"add\": \"104.22.0.0\", \"port\": \"8080\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link8" >> "$HOME/agsb/jh.txt"
+vma_link9="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-8880\", \"add\": \"104.24.0.0\", \"port\": \"8880\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link9" >> "$HOME/agsb/jh.txt"
+vma_link10="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-2052\", \"add\": \"104.25.0.0\", \"port\": \"2052\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link10" >> "$HOME/agsb/jh.txt"
+vma_link11="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-2082\", \"add\": \"104.26.0.0\", \"port\": \"2082\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link11" >> "$HOME/agsb/jh.txt"
+vma_link12="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-2086\", \"add\": \"104.27.0.0\", \"port\": \"2086\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link12" >> "$HOME/agsb/jh.txt"
+vma_link13="vmess://$(echo "{ \"v\": \"2\", \"ps\": \"${sxname}vmess-ws-argo-$hostname-2095\", \"add\": \"[2400:cb00:2049::0]\", \"port\": \"2095\", \"id\": \"$uuid\", \"aid\": \"0\", \"scy\": \"auto\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"$argodomain\", \"path\": \"/$uuid-vm?ed=2048\", \"tls\": \"\"}" | base64 -w0)"
+echo "$vma_link13" >> "$HOME/agsb/jh.txt"
+sbtk=$(cat "$HOME/agsb/sbargotoken.log" 2>/dev/null)
+if [ -n "$sbtk" ]; then
+nametn="当前Argo固定隧道token：$sbtk"
+fi
+argoshow=$(echo -e "Vmess主协议端口(Argo固定隧道端口)：$port_vm_ws\n当前Argo$name域名：$argodomain\n$nametn\n\n1、💣443端口的vmess-ws-tls-argo节点\n$vmatls_link1\n\n2、💣80端口的vmess-ws-argo节点\n$vma_link7\n")
+fi
+echo "---------------------------------------------------------"
+echo "$argoshow"
+echo "---------------------------------------------------------"
+echo "聚合节点信息，请查看$HOME/agsb/jh.txt文件或者运行cat $HOME/agsb/jh.txt进行复制"
+echo "---------------------------------------------------------"
+echo "相关快捷方式如下：(首次安装成功后需重连SSH，agsb快捷方式才可生效)"
+showmode
+}
+cleandel(){
+for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsb/c|/agsb/s|/agsb/x'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
+kill -15 $(pgrep -f 'agsb/s' 2>/dev/null) $(pgrep -f 'agsb/c' 2>/dev/null) $(pgrep -f 'agsb/x' 2>/dev/null) >/dev/null 2>&1
+# 停止并移除保活任务
+pkill -f "$HOME/agsb/keep_alive_task.sh" >/dev/null 2>&1
 
-echo -e "${GREEN}部署完成！感谢使用！${NC}"
-
-# 退出脚本，避免重复执行
-exit 0
+sed -i '/yonggekkk/d' ~/.bashrc
+sed -i '/export PATH="\$HOME\/bin:\$PATH"/d' ~/.bashrc
+. ~/.bashrc 2>/dev/null
+crontab -l > /tmp/crontab.tmp 2>/dev/null
+sed -i '/agsb\/sing-box/d' /tmp/crontab.tmp
+sed -i '/agsb\/xray/d' /tmp/crontab.tmp
+# 从cron中删除保活任务
+sed -i '/agsb\/keep_alive_task.sh/d' /tmp/crontab.tmp
+sed -i '/agsb\/cloudflared/d' /tmp/crontab.tmp
+crontab /tmp/crontab.tmp 2>/dev/null
+rm /tmp/crontab.tmp
+rm -rf  "$HOME/bin/agsb"
+}
+if [ "$1" = "del" ]; then
+cleandel
+# 删除保活相关文件
+rm -rf "$HOME/agsb/keep_alive_task.sh" "$HOME/agsb/keep_alive_status.log"
+rm -rf "$HOME/agsb"
+echo "卸载完成"
+echo "欢迎继续使用甬哥侃侃侃ygkkk的ArgoSB一键无交互小钢炮脚本💣"
+echo
+showmode
+exit
+elif [ "$1" = "rep" ]; then
+cleandel
+# 在重置时，清理除了二进制文件之外的所有文件，包括保活相关文件
+find "$HOME/agsb" -mindepth 1 -not -name sing-box -not -name xray -not -name cloudflared -exec rm -rf {} +
+echo "ArgoSB重置协议完成，开始更新相关协议变量……" && sleep 3
+echo
+elif [ "$1" = "list" ]; then
+cip
+exit
+elif [ "$1" = "res" ]; then
+killstart
+sleep 5 && echo "重启完成"
+exit
+fi
+if ! find /proc/*/exe -type l 2>/dev/null | grep -E '/proc/[0-9]+/exe' | xargs -r readlink 2>/dev/null | grep -Eq 'agsb/(s|x)' && ! pgrep -f 'agsb/(s|x)' >/dev/null 2>&1; then
+for P in /proc/[0-9]*; do if [ -L "$P/exe" ]; then TARGET=$(readlink -f "$P/exe" 2>/dev/null); if echo "$TARGET" | grep -qE '/agsb/c|/agsb/s|/agsb/x'; then PID=$(basename "$P"); kill "$PID" 2>/dev/null && echo "Killed $PID ($TARGET)" || echo "Could not kill $PID ($TARGET)"; fi; fi; done
+kill -15 $(pgrep -f 'agsb/s' 2>/dev/null) $(pgrep -f 'agsb/c' 2>/dev/null) $(pgrep -f 'agsb/x' 2>/dev/null) >/dev/null 2>&1
+v4orv6(){
+if [ -z "$(curl -s4m5 icanhazip.com -k)" ]; then
+echo "检测到 纯IPV6 VPS，添加NAT64"
+echo -e "nameserver 2a00:1098:2b::1\nnameserver 2a00:1098:2c::1" > /etc/resolv.conf
+fi
+if [ -n "$(curl -s6m5 icanhazip.com -k)" ]; then
+sendip="2606:4700:d0::a29f:c001"
+xendip="[2606:4700:d0::a29f:c001]"
+else
+sendip="162.159.192.1"
+xendip="162.159.192.1"
+fi
+}
+warpcheck
+if ! echo "$wgcfv4" | grep -qE 'on|plus' && ! echo "$wgcfv6" | grep -qE 'on|plus'; then
+v4orv6
+else
+systemctl stop wg-quick@wgcf >/dev/null 2>&1
+kill -15 $(pgrep warp-go) >/dev/null 2>&1 && sleep 2
+v4orv6
+systemctl start wg-quick@wgcf >/dev/null 2>&1
+systemctl restart warp-go >/dev/null 2>&1
+systemctl enable warp-go >/dev/null 2>&1
+systemctl start warp-go >/dev/null 2>&1
+fi
+echo "VPS系统：$op"
+echo "CPU架构：$cpu"
+echo "ArgoSB脚本未安装，开始安装…………" && sleep 2
+setenforce 0 >/dev/null 2>&1
+iptables -P INPUT ACCEPT >/dev/null 2>&1
+iptables -P FORWARD ACCEPT >/dev/null 2>&1
+iptables -P OUTPUT ACCEPT >/dev/null 2>&1
+iptables -F >/dev/null 2>&1
+netfilter-persistent save >/dev/null 2>&1
+ins
+cip
+echo
+else
+echo "ArgoSB脚本已安装"
+echo
+echo "相关快捷方式如下："
+showmode
+exit
+fi
