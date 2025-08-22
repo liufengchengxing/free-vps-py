@@ -515,6 +515,8 @@ new_config = '''config = {
                         "t.me",
                         "telegram.org",
                         "facebook.com",
+                        "instagram.com",
+                        "discord.com",
                         "googlevideo.com",
                         "ytimg.com",
                         "gstatic.com",
